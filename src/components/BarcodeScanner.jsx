@@ -268,24 +268,44 @@ export default function BarcodeScanner({ onBarcodeDetected, onImageCaptured, onC
       <style>{`
         #barcode-reader {
           border: none !important;
+          width: 100vw !important;
+          height: 100vh !important;
+          position: fixed !important;
+          top: 0 !important;
+          left: 0 !important;
         }
         #barcode-reader video {
-          width: 100% !important;
-          height: 100% !important;
+          width: 100vw !important;
+          height: 100vh !important;
           object-fit: cover !important;
-          border-radius: 0 !important;
+          position: fixed !important;
+          top: 0 !important;
+          left: 0 !important;
         }
         #barcode-reader__scan_region {
           background: transparent !important;
-          min-height: 100% !important;
+          position: fixed !important;
+          top: 0 !important;
+          left: 0 !important;
+          width: 100vw !important;
+          height: 100vh !important;
+        }
+        #barcode-reader__scan_region video {
+          width: 100vw !important;
+          height: 100vh !important;
+          object-fit: cover !important;
         }
         #barcode-reader__dashboard {
           display: none !important;
         }
-        #barcode-reader__scan_region > br {
+        #barcode-reader__scan_region > br,
+        #barcode-reader img,
+        #barcode-reader__dashboard_section,
+        #barcode-reader__dashboard_section_csr,
+        #barcode-reader__dashboard_section_swaplink {
           display: none !important;
         }
-        #barcode-reader img {
+        #qr-shaded-region {
           display: none !important;
         }
         @keyframes scan {
