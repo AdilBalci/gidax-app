@@ -1,67 +1,101 @@
-// ============================================
-// OPEN FOOD FACTS API
-// ============================================
+// Open Food Facts API
+const OFF_API_BASE = 'https://world.openfoodfacts.org/api/v2';
+
 export const fetchProductByBarcode = async (barcode) => {
   try {
-    const response = await fetch(
-      `https://world.openfoodfacts.org/api/v2/product/${barcode}.json`
-    );
+    const response = await fetch(`${OFF_API_BASE}/product/${barcode}.json`);
     const data = await response.json();
     
-    if (data.status === 1 && data.product) {
-      const p = data.product;
-      return {
-        success: true,
-        source: 'openfoodfacts',
-        product: {
-          name: p.product_name_tr || p.product_name || 'Bilinmeyen Ürün',
-          brand: p.brands || 'Bilinmeyen Marka',
-          category: p.categories_tags?.[0]?.replace('en:', '') || 'Gıda',
-          serving_size: p.serving_size || '100g',
-          image: p.image_front_url || p.image_url || null,
-          nutrition: {
-            energy: p.nutriments?.['energy-kcal_100g'] || p.nutriments?.energy_100g || 0,
-            protein: p.nutriments?.proteins_100g || 0,
-            carbohydrates: p.nutriments?.carbohydrates_100g || 0,
-            sugar: p.nutriments?.sugars_100g || 0,
-            fat: p.nutriments?.fat_100g || 0,
-            saturated_fat: p.nutriments?.['saturated-fat_100g'] || 0,
-            fiber: p.nutriments?.fiber_100g || 0,
-            salt: p.nutriments?.salt_100g || 0
-          },
-          ingredients: p.ingredients_text_tr || p.ingredients_text || '',
-          additives: p.additives_tags?.map(a => a.replace('en:', '').toUpperCase()) || [],
-          nova_group: p.nova_group || 3,
-          nutri_score: p.nutriscore_grade?.toUpperCase() || null,
-          allergens: p.allergens_tags || []
-        }
-      };
+    if (data.status === 0 || !data.product) {
+      return { success: false, error: 'Ürün bulunamadı' };
     }
+
+    const product = data.product;
     
-    return { success: false, error: 'Ürün bulunamadı' };
+    // Parse nutrition values
+    const nutriments = product.nutriments || {};
+    
+    const parsedProduct = {
+      name: product.product_name_tr || product.product_name || 'Bilinmeyen Ürün',
+      brand: product.brands || 'Bilinmeyen Marka',
+      category: parseCategory(product.categories_tags),
+      serving_size: product.serving_size || '100g',
+      image: product.image_front_url || product.image_url || null,
+      nutrition: {
+        energy: Math.round(nutriments['energy-kcal_100g'] || nutriments['energy-kcal'] || 0),
+        protein: parseFloat(nutriments.proteins_100g || 0).toFixed(1),
+        carbohydrates: parseFloat(nutriments.carbohydrates_100g || 0).toFixed(1),
+        sugar: parseFloat(nutriments.sugars_100g || 0).toFixed(1),
+        fat: parseFloat(nutriments.fat_100g || 0).toFixed(1),
+        saturated_fat: parseFloat(nutriments['saturated-fat_100g'] || 0).toFixed(1),
+        fiber: parseFloat(nutriments.fiber_100g || 0).toFixed(1),
+        salt: parseFloat(nutriments.salt_100g || 0).toFixed(2),
+      },
+      ingredients: product.ingredients_text_tr || product.ingredients_text || '',
+      additives: parseAdditives(product.additives_tags),
+      nova_group: product.nova_group || 3,
+      nutri_score: product.nutriscore_grade?.toUpperCase() || null,
+      allergens: product.allergens_tags || [],
+      labels: product.labels_tags || [],
+      origin: product.origins || product.manufacturing_places || '',
+    };
+
+    return { success: true, product: parsedProduct };
   } catch (error) {
-    console.error('Open Food Facts API Error:', error);
-    return { success: false, error: 'API bağlantı hatası' };
+    console.error('OFF API Error:', error);
+    return { success: false, error: 'Bağlantı hatası' };
   }
 };
 
-// ============================================
-// CLAUDE AI - IMAGE ANALYSIS
-// ============================================
-export const analyzeImageWithClaude = async (imageBase64) => {
-  try {
-    const response = await fetch('/api/analyze', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ image: imageBase64 })
-    });
-    
-    if (!response.ok) throw new Error('API error');
-    
-    const data = await response.json();
-    return { success: true, ...data };
-  } catch (error) {
-    console.error('Claude API Error:', error);
-    return { success: false, error: 'Görsel analiz hatası' };
+const parseCategory = (categories) => {
+  if (!categories || categories.length === 0) return 'Diğer';
+  
+  const categoryMap = {
+    'beverages': 'İçecek',
+    'drinks': 'İçecek',
+    'sodas': 'İçecek',
+    'waters': 'İçecek',
+    'snacks': 'Atıştırmalık',
+    'biscuits': 'Atıştırmalık',
+    'chocolates': 'Atıştırmalık',
+    'candies': 'Atıştırmalık',
+    'chips': 'Atıştırmalık',
+    'dairy': 'Süt Ürünü',
+    'milks': 'Süt Ürünü',
+    'cheeses': 'Süt Ürünü',
+    'yogurts': 'Süt Ürünü',
+    'cereals': 'Tahıl',
+    'breads': 'Tahıl',
+    'meats': 'Et Ürünü',
+    'frozen': 'Dondurulmuş',
+    'canned': 'Konserve',
+  };
+
+  for (const cat of categories) {
+    const key = cat.replace('en:', '').toLowerCase();
+    for (const [match, label] of Object.entries(categoryMap)) {
+      if (key.includes(match)) return label;
+    }
   }
+  
+  return 'Diğer';
 };
+
+const parseAdditives = (additivesTags) => {
+  if (!additivesTags) return [];
+  return additivesTags
+    .map(tag => tag.replace('en:', '').toUpperCase())
+    .filter(code => code.startsWith('E'));
+};
+
+// Claude AI Image Analysis
+export const analyzeImageWithClaude = async (imageBase64) => {
+  // Bu fonksiyon backend gerektirir (API key güvenliği için)
+  // Şimdilik placeholder
+  return {
+    success: false,
+    error: 'AI analizi yakında aktif olacak'
+  };
+};
+
+export default { fetchProductByBarcode, analyzeImageWithClaude };
