@@ -12,7 +12,9 @@
   "dependencies": {
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
-    "lucide-react": "^0.263.1"
+    "lucide-react": "^0.263.1",
+    "@anthropic-ai/sdk": "^0.52.0",
+    "html5-qrcode": "^2.3.8"
   },
   "devDependencies": {
     "@types/react": "^18.2.0",

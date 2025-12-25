@@ -1,5 +1,7 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react';
 import { Camera, ScanLine, Search, AlertTriangle, CheckCircle, XCircle, ChevronRight, ChevronDown, Leaf, Heart, ShieldCheck, TrendingUp, Star, Info, X, Loader2, Upload, Zap, Apple, Coffee, Milk, Cookie, Package, AlertCircle, ThumbsUp, ThumbsDown, Flame, Scale, Activity, Clock, Trash2, Share2, Plus, Minus, Sparkles, Target, Utensils, Wheat, Egg, Fish } from 'lucide-react';
+import BarcodeScanner from './components/BarcodeScanner';
+import { fetchProductByBarcode, analyzeImageWithClaude } from './services/api';
 
 // ============================================
 // SENSITIVITY DATA
@@ -208,13 +210,14 @@ const calculatePortionNutrition = (nutrition, servingSize, portionCount) => {
 // ============================================
 export default function GidaXApp() {
   const [activeView, setActiveView] = useState('scan');
-  const [activeTab, setActiveTab] = useState('barcode');
-  const [barcode, setScanLine] = useState('');
+  const [barcode, setBarcode] = useState('');
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [result, setResult] = useState(null);
   const [showResult, setShowResult] = useState(false);
   const [portionCount, setPortionCount] = useState(1);
   const [selectedAdditive, setSelectedAdditive] = useState(null);
+  const [showScanner, setShowScanner] = useState(false);
+  const [scanStatus, setScanStatus] = useState('');
   const [userProfile, setUserProfile] = useState({
     diseases: ['diyabet'],
     sensitivities: ['helal', 'yerli'],
@@ -243,7 +246,6 @@ export default function GidaXApp() {
   const handleImageAnalyze = () => {
     if (!capturedImage) return;
     setIsAnalyzing(true);
-    // Simulate AI analysis - in production this would call Claude API
     setTimeout(() => {
       alert('AI görsel analizi yakında aktif olacak! Şimdilik barkod ile arama yapabilirsiniz.');
       setIsAnalyzing(false);
@@ -255,8 +257,6 @@ export default function GidaXApp() {
     if (fileInputRef.current) fileInputRef.current.value = '';
     if (galleryInputRef.current) galleryInputRef.current.value = '';
   };
-
-  // LocalStorage
   useEffect(() => {
     const f = localStorage.getItem('gidax_favorites');
     const h = localStorage.getItem('gidax_history');
@@ -372,33 +372,111 @@ export default function GidaXApp() {
   }, [userProfile]);
 
   // Handlers
-  const handleScan = () => {
+  const handleScan = async () => {
     if (!barcode.trim()) return;
     setIsAnalyzing(true);
-    setTimeout(() => {
-      const product = SAMPLE_PRODUCTS[barcode];
-      if (product) {
-        const r = analyzeProduct(product);
+    setScanStatus('Open Food Facts aranıyor...');
+    
+    try {
+      const offResult = await fetchProductByBarcode(barcode);
+      if (offResult.success) {
+        const r = analyzeProduct(offResult.product);
         setResult(r);
         setShowResult(true);
         setHistory(prev => [{ id: Date.now(), barcode, product: r.product, health_score: r.scores.health_score.value, timestamp: new Date().toISOString() }, ...prev.slice(0, 49)]);
-      } else { alert('Ürün bulunamadı. Örnek barkodları deneyin.'); }
-      setIsAnalyzing(false);
-    }, 1500);
+      } else {
+        const localProduct = SAMPLE_PRODUCTS[barcode];
+        if (localProduct) {
+          const r = analyzeProduct(localProduct);
+          setResult(r);
+          setShowResult(true);
+          setHistory(prev => [{ id: Date.now(), barcode, product: r.product, health_score: r.scores.health_score.value, timestamp: new Date().toISOString() }, ...prev.slice(0, 49)]);
+        } else {
+          alert('Ürün bulunamadı. Kamera ile tarayın.');
+        }
+      }
+    } catch (error) {
+      alert('Arama hatası oluştu.');
+    }
+    setIsAnalyzing(false);
+    setScanStatus('');
   };
 
-  const handleQuickScan = (id) => {
-    setScanLine(id); setIsAnalyzing(true); setPortionCount(1);
-    setTimeout(() => {
-      const product = SAMPLE_PRODUCTS[id];
-      if (product) {
-        const r = analyzeProduct(product);
+  const handleBarcodeDetected = async (detectedBarcode) => {
+    setShowScanner(false);
+    setBarcode(detectedBarcode);
+    setIsAnalyzing(true);
+    setScanStatus('Barkod bulundu! Aranıyor...');
+    
+    try {
+      const offResult = await fetchProductByBarcode(detectedBarcode);
+      if (offResult.success) {
+        const r = analyzeProduct(offResult.product);
+        setResult(r);
+        setShowResult(true);
+        setHistory(prev => [{ id: Date.now(), barcode: detectedBarcode, product: r.product, health_score: r.scores.health_score.value, timestamp: new Date().toISOString() }, ...prev.slice(0, 49)]);
+      } else {
+        alert('Ürün bulunamadı. Fotoğraf çekerek AI analizi yapın.');
+      }
+    } catch (error) {
+      alert('Arama hatası.');
+    }
+    setIsAnalyzing(false);
+    setScanStatus('');
+  };
+
+  const handleImageCaptured = async (imageBase64) => {
+    setShowScanner(false);
+    setIsAnalyzing(true);
+    setScanStatus('AI analiz yapılıyor...');
+    
+    try {
+      const aiResult = await analyzeImageWithClaude(imageBase64);
+      if (aiResult.success) {
+        const r = analyzeProduct(aiResult.product);
+        setResult(r);
+        setShowResult(true);
+        setHistory(prev => [{ id: Date.now(), barcode: 'AI', product: r.product, health_score: r.scores.health_score.value, timestamp: new Date().toISOString() }, ...prev.slice(0, 49)]);
+      } else {
+        alert(aiResult.error || 'Analiz başarısız.');
+      }
+    } catch (error) {
+      alert('AI analiz hatası.');
+    }
+    setIsAnalyzing(false);
+    setScanStatus('');
+  };
+
+  const handleQuickScan = async (id) => {
+    setBarcode(id);
+    setIsAnalyzing(true);
+    setPortionCount(1);
+    
+    try {
+      const offResult = await fetchProductByBarcode(id);
+      if (offResult.success) {
+        const r = analyzeProduct(offResult.product);
         setResult(r);
         setShowResult(true);
         setHistory(prev => [{ id: Date.now(), barcode: id, product: r.product, health_score: r.scores.health_score.value, timestamp: new Date().toISOString() }, ...prev.slice(0, 49)]);
+      } else {
+        const localProduct = SAMPLE_PRODUCTS[id];
+        if (localProduct) {
+          const r = analyzeProduct(localProduct);
+          setResult(r);
+          setShowResult(true);
+          setHistory(prev => [{ id: Date.now(), barcode: id, product: r.product, health_score: r.scores.health_score.value, timestamp: new Date().toISOString() }, ...prev.slice(0, 49)]);
+        }
       }
-      setIsAnalyzing(false);
-    }, 1500);
+    } catch (error) {
+      const localProduct = SAMPLE_PRODUCTS[id];
+      if (localProduct) {
+        const r = analyzeProduct(localProduct);
+        setResult(r);
+        setShowResult(true);
+      }
+    }
+    setIsAnalyzing(false);
   };
 
   const toggleFavorite = (product) => {
@@ -536,168 +614,108 @@ export default function GidaXApp() {
         {/* Scan View */}
         {activeView === 'scan' && !showResult && (
           <div className="space-y-4">
-            <div className="flex gap-2 p-1 bg-slate-800/50 rounded-2xl">
-              <button onClick={() => setActiveTab('barcode')} className={`flex-1 py-3 px-4 rounded-xl font-medium text-sm transition-all flex items-center justify-center gap-2 ${activeTab === 'barcode' ? 'bg-gradient-to-r from-emerald-500 to-teal-500 text-white shadow-lg' : 'text-slate-400'}`}>
-                <ScanLine className="w-4 h-4" />Barkod
-              </button>
-              <button onClick={() => setActiveTab('camera')} className={`flex-1 py-3 px-4 rounded-xl font-medium text-sm transition-all flex items-center justify-center gap-2 ${activeTab === 'camera' ? 'bg-gradient-to-r from-emerald-500 to-teal-500 text-white shadow-lg' : 'text-slate-400'}`}>
-                <Camera className="w-4 h-4" />AI Görsel
-              </button>
-            </div>
-
-            {activeTab === 'barcode' && (
-              <>
-                <div className="p-5 rounded-3xl bg-gradient-to-br from-slate-800/80 to-slate-800/40 backdrop-blur-xl border border-white/10">
-                  <div className="flex items-center gap-3 mb-4">
-                    <div className="p-2.5 rounded-xl bg-gradient-to-br from-emerald-500/20 to-teal-500/20"><ScanLine className="w-5 h-5 text-emerald-400" /></div>
-                    <div><h2 className="font-semibold">Barkod ile Ara</h2><p className="text-xs text-slate-500">Ürünün barkod numarasını girin</p></div>
-                  </div>
-                  <div className="flex gap-3">
-                    <input type="text" value={barcode} onChange={(e) => setScanLine(e.target.value)} onKeyPress={(e) => e.key === 'Enter' && handleScan()} placeholder="8690504055020"
-                      className="flex-1 px-4 py-3 rounded-xl bg-slate-900/80 border border-white/10 text-white placeholder:text-slate-600 focus:outline-none focus:ring-2 focus:ring-emerald-500/50 font-mono" />
-                    <button onClick={handleScan} disabled={!barcode || isAnalyzing} className="px-5 py-3 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-500 text-white font-medium disabled:opacity-50">
-                      {isAnalyzing ? <Loader2 className="w-5 h-5 animate-spin" /> : <Search className="w-5 h-5" />}
-                    </button>
-                  </div>
+            {/* Main Scan Button */}
+            <button
+              onClick={() => setShowScanner(true)}
+              className="w-full aspect-[4/3] rounded-3xl bg-gradient-to-br from-emerald-500/20 to-teal-500/10 border-2 border-dashed border-emerald-500/30 hover:border-emerald-400 flex flex-col items-center justify-center gap-4 transition-all"
+            >
+              <div className="relative">
+                <div className="w-24 h-24 rounded-full bg-gradient-to-br from-emerald-500/30 to-teal-500/20 flex items-center justify-center">
+                  <Camera className="w-12 h-12 text-emerald-400" />
                 </div>
-
-                <div>
-                  <h3 className="text-sm font-medium text-slate-500 mb-3 px-1 flex items-center gap-2"><Sparkles className="w-4 h-4" />Hızlı Test</h3>
-                  <div className="grid grid-cols-2 gap-3">
-                    {Object.entries(SAMPLE_PRODUCTS).slice(0, 6).map(([id, product]) => {
-                      const score = calculateHealthScore(product.nutrition, product.additives, product.nova_group);
-                      const grade = getGrade(score);
-                      return (
-                        <button key={id} onClick={() => handleQuickScan(id)} disabled={isAnalyzing}
-                          className="p-4 rounded-2xl bg-slate-800/50 border border-white/5 hover:border-emerald-500/30 transition-all text-left relative">
-                          <div className="absolute top-3 right-3">
-                            <span className="text-xs font-bold px-2 py-1 rounded-lg" style={{ backgroundColor: grade.color + '20', color: grade.color }}>{grade.grade}</span>
-                          </div>
-                          <div className="flex items-start gap-3">
-                            <div className={`p-2 rounded-xl ${product.nova_group === 1 ? 'bg-emerald-500/20' : product.nova_group === 4 ? 'bg-red-500/10' : 'bg-amber-500/20'}`}>
-                              {product.category === 'İçecek' ? <Coffee className="w-4 h-4 text-slate-300" /> : product.category === 'Süt Ürünü' ? <Milk className="w-4 h-4 text-slate-300" /> : <Cookie className="w-4 h-4 text-slate-300" />}
-                            </div>
-                            <div className="min-w-0 flex-1 pr-8">
-                              <p className="font-medium text-sm truncate">{product.name}</p>
-                              <p className="text-xs text-slate-500">{product.brand}</p>
-                            </div>
-                          </div>
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-              </>
-            )}
-
-            {activeTab === 'camera' && (
-              <div className="space-y-4">
-                {!capturedImage ? (
-                  <>
-                    {/* Camera Button */}
-                    <div onClick={() => fileInputRef.current?.click()} className="aspect-[4/3] rounded-3xl bg-gradient-to-br from-slate-800/80 to-slate-800/40 border-2 border-dashed border-white/10 hover:border-emerald-500/50 cursor-pointer flex flex-col items-center justify-center gap-4 transition-all">
-                      <div className="relative">
-                        <div className="w-20 h-20 rounded-full bg-gradient-to-br from-emerald-500/20 to-teal-500/20 flex items-center justify-center">
-                          <Camera className="w-10 h-10 text-emerald-400" />
-                        </div>
-                        <div className="absolute -bottom-1 -right-1 w-8 h-8 bg-gradient-to-br from-cyan-400 to-blue-500 rounded-full flex items-center justify-center">
-                          <Sparkles className="w-4 h-4 text-white" />
-                        </div>
-                      </div>
-                      <div className="text-center">
-                        <p className="font-semibold">Kamera ile Çek</p>
-                        <p className="text-sm text-slate-400 mt-1">Ürün etiketini fotoğraflayın</p>
-                      </div>
-                    </div>
-                    <input 
-                      ref={fileInputRef} 
-                      type="file" 
-                      accept="image/*" 
-                      capture="environment" 
-                      onChange={handleImageChange}
-                      className="hidden" 
-                    />
-
-                    {/* Gallery Button */}
-                    <div onClick={() => galleryInputRef.current?.click()} className="p-4 rounded-2xl bg-slate-800/50 border border-white/10 hover:border-purple-500/50 cursor-pointer flex items-center gap-4 transition-all">
-                      <div className="w-14 h-14 rounded-xl bg-gradient-to-br from-purple-500/20 to-pink-500/20 flex items-center justify-center">
-                        <Upload className="w-7 h-7 text-purple-400" />
-                      </div>
-                      <div>
-                        <p className="font-semibold">Galeriden Seç</p>
-                        <p className="text-sm text-slate-400">Kayıtlı fotoğraflardan yükle</p>
-                      </div>
-                    </div>
-                    <input 
-                      ref={galleryInputRef} 
-                      type="file" 
-                      accept="image/*" 
-                      onChange={handleImageChange}
-                      className="hidden" 
-                    />
-                  </>
-                ) : (
-                  <>
-                    {/* Image Preview */}
-                    <div className="relative rounded-3xl overflow-hidden border border-white/10">
-                      <img src={capturedImage} alt="Captured" className="w-full aspect-[4/3] object-cover" />
-                      <button 
-                        onClick={clearCapturedImage}
-                        className="absolute top-3 right-3 p-2 rounded-xl bg-black/50 backdrop-blur-sm hover:bg-black/70 transition-all"
-                      >
-                        <X className="w-5 h-5 text-white" />
-                      </button>
-                    </div>
-
-                    {/* Analyze Button */}
-                    <button 
-                      onClick={handleImageAnalyze}
-                      disabled={isAnalyzing}
-                      className="w-full py-4 rounded-2xl bg-gradient-to-r from-emerald-500 to-teal-500 text-white font-semibold flex items-center justify-center gap-3 disabled:opacity-50 transition-all hover:shadow-lg hover:shadow-emerald-500/20"
-                    >
-                      {isAnalyzing ? (
-                        <><Loader2 className="w-5 h-5 animate-spin" />Analiz Ediliyor...</>
-                      ) : (
-                        <><Sparkles className="w-5 h-5" />AI ile Analiz Et</>
-                      )}
-                    </button>
-
-                    {/* Retake Options */}
-                    <div className="grid grid-cols-2 gap-3">
-                      <button 
-                        onClick={() => { clearCapturedImage(); fileInputRef.current?.click(); }}
-                        className="py-3 rounded-xl bg-slate-800/50 border border-white/10 text-slate-300 font-medium flex items-center justify-center gap-2"
-                      >
-                        <Camera className="w-4 h-4" />Yeniden Çek
-                      </button>
-                      <button 
-                        onClick={() => { clearCapturedImage(); galleryInputRef.current?.click(); }}
-                        className="py-3 rounded-xl bg-slate-800/50 border border-white/10 text-slate-300 font-medium flex items-center justify-center gap-2"
-                      >
-                        <Upload className="w-4 h-4" />Başka Seç
-                      </button>
-                    </div>
-                  </>
-                )}
-
-                <div className="p-4 rounded-2xl bg-cyan-500/10 border border-cyan-500/20">
-                  <div className="flex items-start gap-3">
-                    <Sparkles className="w-5 h-5 text-cyan-400 flex-shrink-0" />
-                    <div className="text-sm">
-                      <p className="font-medium text-cyan-400 mb-1">Claude AI Destekli</p>
-                      <p className="text-slate-400">Görsel analizi ile ürün etiketini otomatik okur.</p>
-                    </div>
-                  </div>
+                <div className="absolute -bottom-1 -right-1 w-10 h-10 bg-gradient-to-br from-cyan-400 to-blue-500 rounded-full flex items-center justify-center shadow-lg">
+                  <ScanLine className="w-5 h-5 text-white" />
                 </div>
               </div>
-            )}
+              <div className="text-center">
+                <p className="text-xl font-bold text-white">Ürün Tara</p>
+                <p className="text-sm text-slate-400 mt-1">Barkod okur veya AI ile analiz eder</p>
+              </div>
+            </button>
+
+            {/* Manual Barcode Input */}
+            <div className="p-4 rounded-2xl bg-slate-800/50 border border-white/10">
+              <p className="text-sm text-slate-400 mb-3">veya barkod numarası girin:</p>
+              <div className="flex gap-3">
+                <input 
+                  type="text" 
+                  value={barcode} 
+                  onChange={(e) => setBarcode(e.target.value)} 
+                  onKeyPress={(e) => e.key === 'Enter' && handleScan()} 
+                  placeholder="8690504055020"
+                  className="flex-1 px-4 py-3 rounded-xl bg-slate-900/80 border border-white/10 text-white placeholder:text-slate-600 focus:outline-none focus:ring-2 focus:ring-emerald-500/50 font-mono"
+                />
+                <button 
+                  onClick={handleScan} 
+                  disabled={!barcode || isAnalyzing} 
+                  className="px-5 py-3 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-500 text-white font-medium disabled:opacity-50"
+                >
+                  {isAnalyzing ? <Loader2 className="w-5 h-5 animate-spin" /> : <Search className="w-5 h-5" />}
+                </button>
+              </div>
+              {scanStatus && <p className="text-xs text-emerald-400 mt-2">{scanStatus}</p>}
+            </div>
+
+            {/* Quick Test */}
+            <div>
+              <h3 className="text-sm font-medium text-slate-500 mb-3 px-1 flex items-center gap-2">
+                <Sparkles className="w-4 h-4" />Hızlı Test
+              </h3>
+              <div className="grid grid-cols-2 gap-3">
+                {Object.entries(SAMPLE_PRODUCTS).slice(0, 6).map(([id, product]) => {
+                  const score = calculateHealthScore(product.nutrition, product.additives, product.nova_group);
+                  const grade = getGrade(score);
+                  return (
+                    <button 
+                      key={id} 
+                      onClick={() => handleQuickScan(id)} 
+                      disabled={isAnalyzing}
+                      className="p-4 rounded-2xl bg-slate-800/50 border border-white/5 hover:border-emerald-500/30 transition-all text-left relative"
+                    >
+                      <div className="absolute top-3 right-3">
+                        <span className="text-xs font-bold px-2 py-1 rounded-lg" style={{ backgroundColor: grade.color + '20', color: grade.color }}>{grade.grade}</span>
+                      </div>
+                      <div className="flex items-start gap-3">
+                        <div className={`p-2 rounded-xl ${product.nova_group === 1 ? 'bg-emerald-500/20' : product.nova_group === 4 ? 'bg-red-500/10' : 'bg-amber-500/20'}`}>
+                          {product.category === 'İçecek' ? <Coffee className="w-4 h-4 text-slate-300" /> : product.category === 'Süt Ürünü' ? <Milk className="w-4 h-4 text-slate-300" /> : <Cookie className="w-4 h-4 text-slate-300" />}
+                        </div>
+                        <div className="min-w-0 flex-1 pr-8">
+                          <p className="font-medium text-sm truncate">{product.name}</p>
+                          <p className="text-xs text-slate-500">{product.brand}</p>
+                        </div>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Info */}
+            <div className="p-4 rounded-2xl bg-cyan-500/10 border border-cyan-500/20">
+              <div className="flex items-start gap-3">
+                <Sparkles className="w-5 h-5 text-cyan-400 flex-shrink-0" />
+                <div className="text-sm">
+                  <p className="font-medium text-cyan-400 mb-1">Akıllı Tarama</p>
+                  <p className="text-slate-400">Barkod bulamazsa otomatik olarak Claude AI ile görsel analiz yapar.</p>
+                </div>
+              </div>
+            </div>
           </div>
+        )}
+
+        {/* Barcode Scanner Modal */}
+        {showScanner && (
+          <BarcodeScanner
+            onBarcodeDetected={handleBarcodeDetected}
+            onImageCaptured={handleImageCaptured}
+            onClose={() => setShowScanner(false)}
+          />
         )}
 
         {/* Results View */}
         {activeView === 'scan' && showResult && result && (
           <div className="space-y-4">
-            <button onClick={() => { setShowResult(false); setResult(null); setScanLine(''); setPortionCount(1); }} className="flex items-center gap-2 text-slate-400 hover:text-white transition-colors mb-2">
+            <button onClick={() => { setShowResult(false); setResult(null); setBarcode(''); setPortionCount(1); }} className="flex items-center gap-2 text-slate-400 hover:text-white transition-colors mb-2">
               <ChevronRight className="w-4 h-4 rotate-180" /><span className="text-sm">Yeni Tarama</span>
             </button>
 
